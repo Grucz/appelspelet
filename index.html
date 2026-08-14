@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Äppelspelet – energizer med färger</title>
+<meta name="description" content="Automatiserad färgövning för konferenser: röd skärm plockar äpple med höger hand, blå med vänster, båda färger med båda händer.">
+<style>
+/* ------------------------------------------------------------------
+   FÄRGER OCH TYPSNITT
+   Bassidan är mörk med flit: allt annat än en mörk vila mellan
+   kommandona förstör färgupplevelsen på projektor och lyser upp salen.
+   Inga typsnitt hämtas från nätet — sidan ska fungera helt utan
+   uppkoppling när den väl är laddad.
+------------------------------------------------------------------ */
+:root{
+  --rod:    #D81E1E;
+  --bla:    #1148CF;
+  --gul:    #FFD500;
+  --ink:    #0B0D10;
+  --ben:    #F3F0E9;
+  --dis:    #8D94A0;
+  --display: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --data:   ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+*{ box-sizing:border-box; margin:0; padding:0; }
+
+html,body{
+  height:100%;
+  overflow:hidden;
+  background:var(--ink);
+  color:var(--ben);
+  font-family:var(--display);
+  -webkit-font-smoothing:antialiased;
+  overscroll-behavior:none;
+  touch-action:manipulation;
+}
+
+/* Scenen fyller hela ytan, alltid */
+#scen{
+  position:fixed;
+  inset:0;
+  display:grid;
+  place-items:center;
+  text-align:center;
+  padding:max(2rem, env(safe-area-inset-top)) 2rem;
+  background:var(--ink);
+  transition:background-color 60ms linear;
+}
+
+/* Kommandoskärmarna */
+#scen[data-lage="hoger"]{ background:var(--rod); }
+#scen[data-lage="vanster"]{ background:var(--bla); }
+#scen[data-lage="bada"]{
+  /* Blå till vänster, röd till höger — samma sida som publikens egen
+     vänster respektive höger hand när de tittar rakt på skärmen. */
+  background:linear-gradient(90deg, var(--bla) 0 50%, var(--rod) 50% 100%);
+}
+#scen[data-lage="gul"]{ background:var(--gul); color:var(--ink); }
+
+/* Ordet */
+.ord{
+  font-size:clamp(2.6rem, 13vw, 11rem);
+  font-weight:800;
+  line-height:0.92;
+  letter-spacing:-0.03em;
+  text-transform:uppercase;
+  text-shadow:0 0.06em 0.35em rgba(0,0,0,0.28);
+}
+#scen[data-lage="gul"] .ord{ text-shadow:none; }
+.ord small{
+  display:block;
+  margin-top:0.6em;
+  font-size:0.22em;
+  font-weight:600;
+  letter-spacing:0.16em;
+  opacity:0.82;
+}
+
+/* Nedräkning och laddning */
+.siffra{
+  font-family:var(--data);
+  font-size:clamp(6rem, 30vw, 22rem);
+  font-weight:700;
+  line-height:1;
+  letter-spacing:-0.04em;
+}
+.ladda-text{
+  font-size:clamp(1.6rem, 6vw, 4rem);
+  font-weight:700;
+  letter-spacing:-0.01em;
+}
+.ladda-spar{
+  margin-top:2.2rem;
+  width:min(58vw, 30rem);
+  height:6px;
+  border-radius:99px;
+  background:rgba(243,240,233,0.16);
+  overflow:hidden;
+}
+.ladda-fyll{
+  height:100%;
+  width:0%;
+  background:var(--gul);
+  border-radius:99px;
+}
+
+/* Taktmätaren: hårfin linje längst ned som fylls en gång per kommando.
+   Den komprimeras synligt när takten dras upp — publiken känner
+   accelerationen innan de hinner tänka på den. */
+#takt{
+  position:fixed;
+  left:0; bottom:0;
+  height:5px;
+  width:0%;
+  background:rgba(255,255,255,0.5);
+  pointer-events:none;
+}
+#scen[data-lage="gul"] ~ #takt{ background:rgba(11,13,16,0.35); }
+
+/* Startpanelen */
+.panel{
+  max-width:44rem;
+  text-align:left;
+  display:grid;
+  gap:1.5rem;
+}
+.panel h1{
+  font-size:clamp(2.2rem, 7vw, 4.2rem);
+  font-weight:800;
+  letter-spacing:-0.035em;
+  line-height:0.95;
+}
+.panel h1 span{ color:var(--gul); }
+.panel p{
+  font-size:clamp(1rem, 2.4vw, 1.18rem);
+  line-height:1.55;
+  color:#D7D3CB;
+  max-width:38rem;
+}
+.regler{
+  display:grid;
+  gap:0.55rem;
+  font-size:clamp(1rem, 2.4vw, 1.15rem);
+}
+.regel{
+  display:grid;
+  grid-template-columns:2.6rem 1fr;
+  align-items:center;
+  gap:1rem;
+}
+.prick{
+  width:2.6rem; height:1.5rem;
+  border-radius:4px;
+}
+.prick.r{ background:var(--rod); }
+.prick.b{ background:var(--bla); }
+.prick.rb{ background:linear-gradient(90deg, var(--bla) 0 50%, var(--rod) 50% 100%); }
+.prick.g{ background:var(--gul); }
+
+.knappar{ display:flex; flex-wrap:wrap; gap:0.8rem; margin-top:0.4rem; }
+button{
+  font-family:inherit;
+  font-size:1.05rem;
+  font-weight:700;
+  letter-spacing:-0.01em;
+  padding:0.95rem 1.6rem;
+  border:2px solid var(--ben);
+  border-radius:6px;
+  background:transparent;
+  color:var(--ben);
+  cursor:pointer;
+  transition:background-color 120ms ease, color 120ms ease, transform 80ms ease;
+}
+button:hover{ background:var(--ben); color:var(--ink); }
+button:active{ transform:translateY(1px); }
+button:focus-visible{ outline:3px solid var(--gul); outline-offset:3px; }
+button.primar{ background:var(--gul); border-color:var(--gul); color:var(--ink); }
+button.primar:hover{ background:#FFE24D; border-color:#FFE24D; color:var(--ink); }
+
+.fotnot{
+  font-family:var(--data);
+  font-size:0.82rem;
+  color:var(--dis);
+  line-height:1.7;
+  letter-spacing:0.01em;
+}
+
+/* Testlägesremsa */
+#testband{
+  position:fixed;
+  top:0; left:0; right:0;
+  padding:0.55rem 1rem;
+  background:var(--gul);
+  color:var(--ink);
+  font-family:var(--data);
+  font-size:0.85rem;
+  font-weight:700;
+  letter-spacing:0.14em;
+  text-transform:uppercase;
+  text-align:center;
+  display:none;
+  z-index:5;
+}
+body[data-test="1"] #testband{ display:block; }
+
+/* Diskret nödutgång under körning */
+#avbryt{
+  position:fixed;
+  top:1rem; right:1rem;
+  font-size:0.8rem;
+  font-family:var(--data);
+  padding:0.5rem 0.9rem;
+  border-width:1px;
+  border-color:rgba(243,240,233,0.45);
+  color:rgba(243,240,233,0.75);
+  opacity:0.5;
+  display:none;
+  z-index:6;
+}
+#avbryt:hover{ opacity:1; }
+body[data-kor="1"] #avbryt{ display:block; }
+body[data-test="1"] #avbryt{ top:3.1rem; }
+
+@media (max-width:520px){
+  .panel{ gap:1.15rem; }
+  .knappar button{ width:100%; }
+}
+@media (prefers-reduced-motion:reduce){
+  #scen{ transition:none; }
+}
+</style>
+</head>
+<body>
+
+<div id="testband">Testläge — ingen åker ut</div>
+<button id="avbryt" type="button">Avbryt · Esc</button>
+
+<main id="scen" data-lage="start" aria-live="polite">
+  <!-- Innehållet byts ut av skriptet -->
+</main>
+<div id="takt"></div>
+
+<script>
+"use strict";
+
+/* ==================================================================
+   INSTÄLLNINGAR
+   Allt som kan behöva justeras efter en skarp körning ligger här.
+   Tider i millisekunder.
+================================================================== */
+const CONFIG = {
+  nedrakning:   3,          // sekunder innan fas 1
+  fas1: { langd: 15000, intervall: 1800 },          // lugnt, jämnt tempo
+  laddning:     3000,       // mörk paus mellan faserna
+  fas2: { langd: 30000, start: 1400, slut: 300 },   // accelererar
+  gul:          8000,       // hur länge gula skärmen ligger kvar
+  test: { intervall: 2000, sekvens: ["hoger", "vanster", "bada", "hoger", "hoger"] },
+  pausandel:    0.22,       // andel av varje steg som är mörk paus
+  vikter:       { hoger: 0.40, vanster: 0.40, bada: 0.20 },
+  maxUpprepning: 2,         // samma kommando högst så här många i rad
+  ljud:         true
+};
+
+const TEXT = {
+  hoger:   { ord: "Höger",   under: "Plocka äpplet med höger hand" },
+  vanster: { ord: "Vänster", under: "Plocka äpplet med vänster hand" },
+  bada:    { ord: "Båda",    under: "Plocka med båda händerna" },
+  gul:     { ord: "Gult äpple", under: "Alla får sätta sig" }
+};
+
+/* ==================================================================
+   TILLSTÅND
+================================================================== */
+const scen   = document.getElementById("scen");
+const takt   = document.getElementById("takt");
+const kropp  = document.body;
+
+let handelser = [];   // hela körningen som en färdig tidtabell
+let index     = -1;   // vilket händelse som visas just nu
+let t0        = 0;    // starttid enligt performance.now()
+let pausadVid = null;
+let rafId     = null;
+let korLage   = null; // "skarp" | "test" | null
+let laddaFyll = null;
+
+/* ==================================================================
+   TIDTABELL
+   Hela körningen räknas ut i förväg som absoluta tider. Loopen läser
+   sedan bara av klockan. Det gör att sidan aldrig kan drifta, och att
+   den hoppar rätt igen om webbläsaren stryper fliken en stund.
+================================================================== */
+function valjKommando(historik){
+  const v = CONFIG.vikter;
+  let val, forsok = 0;
+  do {
+    const r = Math.random();
+    val = r < v.hoger ? "hoger" : (r < v.hoger + v.vanster ? "vanster" : "bada");
+    forsok++;
+  } while (
+    forsok < 25 &&
+    historik.length >= CONFIG.maxUpprepning &&
+    historik.slice(-CONFIG.maxUpprepning).every(x => x === val)
+  );
+  historik.push(val);
+  return val;
+}
+
+function byggSlinga(start, langd, intervallFn, ut, historik){
+  let t = 0;
+  while (t < langd - 120){
+    let steg = intervallFn(t / langd);
+    if (t + steg > langd) steg = langd - t;
+    if (steg < 220) break;
+    const paus = steg * CONFIG.pausandel;
+    const visa = steg - paus;
+    ut.push({ typ: valjKommando(historik), start: start + t,        slut: start + t + visa });
+    ut.push({ typ: "tom",                   start: start + t + visa, slut: start + t + steg });
+    t += steg;
+  }
+  return start + langd;
+}
+
+function byggSkarp(){
+  const ut = [], hist = [];
+  let t = 0;
+  for (let i = CONFIG.nedrakning; i >= 1; i--){
+    ut.push({ typ: "ned", text: String(i), start: t, slut: t + 1000 });
+    t += 1000;
+  }
+  t = byggSlinga(t, CONFIG.fas1.langd, () => CONFIG.fas1.intervall, ut, hist);
+  ut.push({ typ: "ladda", start: t, slut: t + CONFIG.laddning });
+  t += CONFIG.laddning;
+  const f2 = CONFIG.fas2;
+  t = byggSlinga(t, f2.langd, p => f2.start * Math.pow(f2.slut / f2.start, p), ut, hist);
+  ut.push({ typ: "gul", start: t, slut: t + CONFIG.gul });
+  return ut;
+}
+
+function byggTest(){
+  // Fast, inövad sekvens — inget slumpas här. De två röda i rad är
+  // hela poängen: publiken lär sig att kommandot inte alltid byts.
+  const ut = [];
+  let t = 0;
+  for (let i = 3; i >= 1; i--){
+    ut.push({ typ: "ned", text: String(i), start: t, slut: t + 1000 });
+    t += 1000;
+  }
+  const steg = CONFIG.test.intervall;
+  const paus = steg * CONFIG.pausandel;
+  CONFIG.test.sekvens.forEach(kommando => {
+    ut.push({ typ: kommando, start: t,               slut: t + steg - paus });
+    ut.push({ typ: "tom",    start: t + steg - paus, slut: t + steg });
+    t += steg;
+  });
+  ut.push({ typ: "testklar", start: t, slut: t + 6000 });
+  return ut;
+}
+
+/* ==================================================================
+   RITA
+================================================================== */
+function skarm(lage, html){
+  scen.dataset.lage = lage;
+  scen.innerHTML = html;
+}
+
+function ritaHandelse(h){
+  laddaFyll = null;
+  if (h.typ === "tom"){ skarm("tom", ""); return; }
+
+  if (h.typ === "ned"){
+    skarm("tom", '<div class="siffra">' + h.text + "</div>");
+    pip(880, 0.09);
+    return;
+  }
+
+  if (h.typ === "ladda"){
+    skarm("tom",
+      '<div><div class="ladda-text">Gör er redo</div>' +
+      '<div class="ladda-spar"><div class="ladda-fyll" id="fyll"></div></div></div>');
+    laddaFyll = document.getElementById("fyll");
+    return;
+  }
+
+  if (h.typ === "gul"){
+    skarm("gul", '<div class="ord">' + TEXT.gul.ord + "<small>" + TEXT.gul.under + "</small></div>");
+    pip(660, 0.18);
+    setTimeout(() => pip(440, 0.32), 190);
+    return;
+  }
+
+  if (h.typ === "testklar"){
+    skarm("tom",
+      '<div><div class="ladda-text">Testet är klart</div>' +
+      '<p class="fotnot" style="margin-top:1rem">Skärmen går tillbaka av sig själv</p></div>');
+    return;
+  }
+
+  const t = TEXT[h.typ];
+  skarm(h.typ, '<div class="ord">' + t.ord + "<small>" + t.under + "</small></div>");
+}
+
+/* ==================================================================
+   KLOCKAN
+================================================================== */
+function loop(){
+  rafId = requestAnimationFrame(loop);
+  if (pausadVid !== null) return;
+
+  const nu = performance.now() - t0;
+
+  // Hoppa fram till rätt plats i tidtabellen, oavsett hur mycket
+  // datorn eventuellt har hackat sedan förra bildrutan.
+  let ny = index;
+  while (ny + 1 < handelser.length && nu >= handelser[ny + 1].start) ny++;
+  if (nu >= handelser[handelser.length - 1].slut){ avsluta(); return; }
+  if (ny !== index && ny >= 0){ index = ny; ritaHandelse(handelser[index]); }
+
+  const h = handelser[index];
+  if (!h) return;
+
+  // Taktmätare och laddningsstapel
+  const andel = Math.min(1, Math.max(0, (nu - h.start) / (h.slut - h.start)));
+  if (laddaFyll){ laddaFyll.style.width = (andel * 100).toFixed(1) + "%"; }
+  if (h.typ === "hoger" || h.typ === "vanster" || h.typ === "bada"){
+    takt.style.width = (andel * 100).toFixed(1) + "%";
+  } else {
+    takt.style.width = "0%";
+  }
+}
+
+function starta(lage){
+  if (korLage) return;               // spärr mot dubbelstart
+  korLage   = lage;
+  handelser = (lage === "test") ? byggTest() : byggSkarp();
+  index     = -1;
+  pausadVid = null;
+  t0        = performance.now();
+  kropp.dataset.kor  = "1";
+  kropp.dataset.test = (lage === "test") ? "1" : "0";
+  vackenLas();
+  helskarm(true);
+  ritaHandelse(handelser[0]);
+  index = 0;
+  if (rafId) cancelAnimationFrame(rafId);
+  loop();
+}
+
+function pausa(){
+  if (!korLage) return;
+  if (pausadVid === null){
+    pausadVid = performance.now();
+    scen.insertAdjacentHTML("beforeend",
+      '<div id="pausmarke" style="position:fixed;inset:0;display:grid;place-items:center;' +
+      'background:rgba(11,13,16,0.82);font-size:clamp(1.4rem,5vw,3rem);font-weight:700">Pausad · mellanslag</div>');
+  } else {
+    t0 += performance.now() - pausadVid;
+    pausadVid = null;
+    const m = document.getElementById("pausmarke");
+    if (m) m.remove();
+  }
+}
+
+function avsluta(){
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+  const varTest = (korLage === "test");
+  korLage = null;
+  kropp.dataset.kor = "0";
+  kropp.dataset.test = "0";
+  takt.style.width = "0%";
+  vackenSlapp();
+  visaStart(varTest ? "Testet är klart. Kör skarpt när alla har förstått reglerna." : "");
+}
+
+function avbryt(){
+  if (!korLage) return;
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+  korLage = null;
+  pausadVid = null;
+  kropp.dataset.kor = "0";
+  kropp.dataset.test = "0";
+  takt.style.width = "0%";
+  vackenSlapp();
+  visaStart("Övningen avbröts.");
+}
+
+/* ==================================================================
+   STARTSKÄRM
+================================================================== */
+function visaStart(meddelande){
+  skarm("start",
+    '<div class="panel">' +
+      '<h1>Äppel<span>spelet</span></h1>' +
+      (meddelande ? '<p style="color:var(--gul);font-weight:600">' + meddelande + "</p>" : "") +
+      "<p>Alla ställer sig upp. Skärmen ger order, ni plockar äpplet. " +
+      "Den som plockar fel sätter sig ner. Det går lugnt till en början och " +
+      "därefter fortare och fortare. Övningen tar under en minut och slutar av sig själv.</p>" +
+      '<div class="regler">' +
+        '<div class="regel"><span class="prick r"></span><span>Röd skärm — plocka med <strong>höger</strong> hand</span></div>' +
+        '<div class="regel"><span class="prick b"></span><span>Blå skärm — plocka med <strong>vänster</strong> hand</span></div>' +
+        '<div class="regel"><span class="prick rb"></span><span>Båda färgerna — plocka med <strong>båda</strong> händerna</span></div>' +
+      "</div>" +
+      '<div class="knappar">' +
+        '<button class="primar" id="kor" type="button">Starta övningen</button>' +
+        '<button id="test" type="button">Testläge · 5 kommandon</button>' +
+        '<button id="helskarm" type="button">Helskärm</button>' +
+      "</div>" +
+      '<p class="fotnot">Mellanslag startar och pausar · Esc avbryter · F ger helskärm<br>' +
+      "Sidan behöver ingen uppkoppling när den väl har laddats.</p>" +
+    "</div>");
+
+  document.getElementById("kor").addEventListener("click", () => { vackAudio(); starta("skarp"); });
+  document.getElementById("test").addEventListener("click", () => { vackAudio(); starta("test"); });
+  document.getElementById("helskarm").addEventListener("click", () => helskarm(!document.fullscreenElement));
+}
+
+/* ==================================================================
+   LJUD — genereras i webbläsaren, inga ljudfiler att ladda
+   Hörs bara vid start (nedräkningen) och vid det gula äpplet.
+================================================================== */
+let ac = null;
+function vackAudio(){
+  if (!CONFIG.ljud || ac) return;
+  try {
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    if (ac.state === "suspended") ac.resume();
+  } catch (e){ ac = null; }
+}
+function pip(frekvens, langd){
+  if (!ac) return;
+  try {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = "sine";
+    o.frequency.value = frekvens;
+    o.connect(g); g.connect(ac.destination);
+    const t = ac.currentTime;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.22, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + langd);
+    o.start(t); o.stop(t + langd + 0.05);
+  } catch (e){ /* ljud är trevligt men inte nödvändigt */ }
+}
+
+/* ==================================================================
+   SKÄRMEN SKA INTE SLÄCKAS, OCH HELST VARA I HELSKÄRM
+================================================================== */
+let vaken = null;
+async function vackenLas(){
+  try { if ("wakeLock" in navigator) vaken = await navigator.wakeLock.request("screen"); }
+  catch (e){ /* stöds inte överallt — övningen fungerar ändå */ }
+}
+function vackenSlapp(){
+  try { if (vaken){ vaken.release(); vaken = null; } } catch (e){}
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && korLage) vackenLas();
+});
+
+function helskarm(pa){
+  try {
+    if (pa && !document.fullscreenElement){
+      const el = document.documentElement;
+      (el.requestFullscreen || el.webkitRequestFullscreen || function(){}).call(el);
+    } else if (!pa && document.fullscreenElement){
+      document.exitFullscreen();
+    }
+  } catch (e){ /* helskärm är en bekvämlighet, inte ett krav */ }
+}
+
+/* ==================================================================
+   TANGENTBORD
+================================================================== */
+document.addEventListener("keydown", e => {
+  if (e.code === "Space"){
+    e.preventDefault();
+    if (korLage) pausa(); else { vackAudio(); starta("skarp"); }
+  } else if (e.key === "Escape"){
+    avbryt();
+  } else if (e.key === "f" || e.key === "F"){
+    helskarm(!document.fullscreenElement);
+  }
+});
+document.getElementById("avbryt").addEventListener("click", avbryt);
+
+/* Igång */
+kropp.dataset.kor = "0";
+kropp.dataset.test = "0";
+visaStart("");
+</script>
+</body>
+</html>
