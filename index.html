@@ -252,9 +252,12 @@ body[data-test="1"] #avbryt{ top:3.1rem; }
 ================================================================== */
 const CONFIG = {
   nedrakning:   3,          // sekunder innan fas 1
-  fas1: { langd: 15000, intervall: 1800 },          // lugnt, jämnt tempo
+  fas1: { langd: 12000, intervall: 1800 },          // lugnt, jämnt tempo
   laddning:     3000,       // mörk paus mellan faserna
-  fas2: { langd: 30000, start: 1400, slut: 300 },   // accelererar
+  // Samma accelerationskurva som tidigare (1400 → 300 ms på 30 s), men
+  // avklippt efter 18 s: de snabbaste sista 12 sekunderna är borta
+  // och det gula äpplet kommer direkt därefter.
+  fas2: { langd: 18000, start: 1400, slut: 556 },   // accelererar
   gul:          8000,       // hur länge gula skärmen ligger kvar
   test: { intervall: 2000, sekvens: ["hoger", "vanster", "bada", "hoger", "hoger"] },
   pausandel:    0.22,       // andel av varje steg som är mörk paus
@@ -307,18 +310,43 @@ function valjKommando(historik){
   return val;
 }
 
+/* En fas ska alltid innehålla alla tre kommandona och minst ett par
+   av samma kommando i rad (aldrig tre). Slumpen dras om tills det
+   stämmer, så ingen körning blir enformig. */
+function byggSekvens(antal, historik){
+  for (let forsok = 0; forsok < 500; forsok++){
+    const h = historik.slice();
+    const seq = [];
+    for (let i = 0; i < antal; i++) seq.push(valjKommando(h));
+    const allaTre = ["hoger", "vanster", "bada"].every(k => seq.includes(k));
+    const parIRad = seq.some((k, i) => i > 0 && seq[i - 1] === k);
+    if ((allaTre || antal < 3) && (parIRad || antal < 4)){
+      historik.push(...seq);
+      return seq;
+    }
+  }
+  const seq = [];
+  for (let i = 0; i < antal; i++) seq.push(valjKommando(historik));
+  return seq;
+}
+
 function byggSlinga(start, langd, intervallFn, ut, historik){
+  const steg = [];
   let t = 0;
   while (t < langd - 120){
-    let steg = intervallFn(t / langd);
-    if (t + steg > langd) steg = langd - t;
-    if (steg < 220) break;
-    const paus = steg * CONFIG.pausandel;
-    const visa = steg - paus;
-    ut.push({ typ: valjKommando(historik), start: start + t,        slut: start + t + visa });
-    ut.push({ typ: "tom",                   start: start + t + visa, slut: start + t + steg });
-    t += steg;
+    const s = intervallFn(t / langd);
+    // Ett kommando som inte får plats helt hoppas över, så att sista
+    // färgen aldrig blir kortare än takten. Resten blir mörk paus.
+    if (t + s > langd) break;
+    steg.push({ t: t, s: s });
+    t += s;
   }
+  const seq = byggSekvens(steg.length, historik);
+  steg.forEach((x, i) => {
+    const visa = x.s * (1 - CONFIG.pausandel);
+    ut.push({ typ: seq[i], start: start + x.t,        slut: start + x.t + visa });
+    ut.push({ typ: "tom",  start: start + x.t + visa, slut: start + x.t + x.s });
+  });
   return start + langd;
 }
 
@@ -509,7 +537,7 @@ function visaStart(meddelande){
         '<button id="test" type="button">Testläge · 5 kommandon</button>' +
         '<button id="helskarm" type="button">Helskärm</button>' +
       "</div>" +
-      '<p class="fotnot">Mellanslag startar och pausar · Esc avbryter · F ger helskärm<br>' +
+      '<p class="fotnot">Esc avbryter · F ger helskärm<br>' +
       "Sidan behöver ingen uppkoppling när den väl har laddats.</p>" +
     "</div>");
 
@@ -574,11 +602,26 @@ function helskarm(pa){
 /* ==================================================================
    TANGENTBORD
 ================================================================== */
+// Mellanslag gör ingenting — varken startar, pausar eller trycker på en
+// knapp som råkar ha fokus.
+function stoppaMellanslag(e){
+  if (e.code === "Space" || e.key === " "){ e.preventDefault(); e.stopPropagation(); return true; }
+  return false;
+}
+document.addEventListener("keyup", stoppaMellanslag, true);
+
+// Webbläsaren använder första Esc-trycket till att lämna helskärm och
+// skickar då inget tangenttryck till sidan. Därför avbryts övningen
+// också när helskärmen stängs under körning.
+function helskarmAndrad(){
+  if (!document.fullscreenElement && !document.webkitFullscreenElement && korLage) avbryt();
+}
+document.addEventListener("fullscreenchange", helskarmAndrad);
+document.addEventListener("webkitfullscreenchange", helskarmAndrad);
+
 document.addEventListener("keydown", e => {
-  if (e.code === "Space"){
-    e.preventDefault();
-    if (korLage) pausa(); else { vackAudio(); starta("skarp"); }
-  } else if (e.key === "Escape"){
+  if (stoppaMellanslag(e)) return;
+  if (e.key === "Escape"){
     avbryt();
   } else if (e.key === "f" || e.key === "F"){
     helskarm(!document.fullscreenElement);
